@@ -5,7 +5,12 @@ import type {
   TargetSettings,
 } from "../adapter.ts";
 import type { ResourceKind } from "../kinds.ts";
-import { chooseServerType, hetzner, toHetznerLabels } from "./hetzner.ts";
+import {
+  chooseServerType,
+  hetzner,
+  SERVER_TYPES,
+  toHetznerLabels,
+} from "./hetzner.ts";
 
 const target: TargetSettings = { provider: "hetzner", region: "fsn1" };
 
@@ -257,13 +262,13 @@ Deno.test("firewall: render expands all, drops empty rules, notes description", 
 });
 
 Deno.test("server types: smallest fit, architecture and location", () => {
-  assertEquals(chooseServerType(2, 2048, "x86_64", "fsn1")?.name, "cpx11");
-  assertEquals(chooseServerType(2, 4096, "x86_64", "fsn1")?.name, "cx22");
+  assertEquals(chooseServerType(2, 2048, "x86_64", "fsn1")?.name, "cx23");
+  assertEquals(chooseServerType(2, 4096, "x86_64", "fsn1")?.name, "cx23");
   // cx is EU only: in Ashburn the same need lands on cpx.
-  assertEquals(chooseServerType(2, 4096, "x86_64", "ash")?.name, "cpx21");
-  assertEquals(chooseServerType(4, 8192, "x86_64", "ash")?.name, "cpx31");
+  assertEquals(chooseServerType(2, 4096, "x86_64", "ash")?.name, "cpx22");
+  assertEquals(chooseServerType(4, 8192, "x86_64", "ash")?.name, "cpx32");
   assertEquals(chooseServerType(4, 8192, "arm64", "nbg1")?.name, "cax21");
-  assertEquals(chooseServerType(4, 8192, "x86_64", "fsn1")?.name, "cx32");
+  assertEquals(chooseServerType(4, 8192, "x86_64", "fsn1")?.name, "cx33");
   assertEquals(chooseServerType(32, 131072, "x86_64", "fsn1")?.name, "ccx53");
   assertEquals(chooseServerType(32, 131072, "arm64", "fsn1"), null);
 });
@@ -341,7 +346,7 @@ Deno.test("vm: render sizes, wires dependencies and records decisions", () => {
   assertEquals(r.behaviorType, "@swamp/hetzner-cloud/servers");
   assertEquals(r.globalArguments.name, "web-1");
   assertEquals(r.globalArguments.location, "fsn1");
-  assertEquals(r.globalArguments.server_type, "cx22");
+  assertEquals(r.globalArguments.server_type, "cx23");
   assertEquals(r.globalArguments.image, undefined);
   assertEquals(r.globalArguments.networks, ["${{ ref(aws:network:v) }}"]);
   assertEquals(r.globalArguments.firewalls, [{
@@ -353,9 +358,9 @@ Deno.test("vm: render sizes, wires dependencies and records decisions", () => {
     aws_autoscaling_groupName: "asg",
   });
   assert(r.decisions.some((d) => d.includes("ami-0abc")));
-  assert(r.losses.some((l) => l.includes("maps to Hetzner cx22")));
-  assert(r.losses.some((l) => l.includes("100 GiB but cx22 has 40")));
-  assertEquals(r.expected.machineType, "cx22");
+  assert(r.losses.some((l) => l.includes("maps to Hetzner cx23")));
+  assert(r.losses.some((l) => l.includes("100 GiB but cx23 has 40")));
+  assertEquals(r.expected.machineType, "cx23");
   assertEquals(r.expected.memoryMiB, 4096);
   assertEquals(r.expected.bootDiskGiB, 40);
   assertEquals(r.expected.publicIp, true);
@@ -683,4 +688,17 @@ Deno.test("names: networks, firewalls and load balancers", () => {
   assert(kind("block-volume").validateName("bad name").length > 0);
   assertEquals(kind("dns-zone").validateName("example.com"), []);
   assert(kind("dns-zone").validateName("Example.com.").length > 0);
+});
+
+Deno.test("server types: replaced generations size source servers but are never chosen", () => {
+  const old = SERVER_TYPES.filter((t) => t.deprecated).map((t) => t.name);
+  assert(old.includes("cx22") && old.includes("cpx11"));
+  for (const [v, m] of [[1, 1024], [2, 2048], [3, 4096], [16, 32768]]) {
+    const pick = chooseServerType(v, m, "x86_64", "fsn1");
+    assert(
+      pick && !pick.deprecated,
+      `${v} vCPU / ${m} MiB chose ${pick?.name}`,
+    );
+  }
+  assertEquals(chooseServerType(1, 2048, "x86_64", "ash")?.name, "cpx12");
 });

@@ -12,13 +12,10 @@ handful of resources, or a whole estate.
 > live data. Treat every mapping as a proposal to review, which is how the
 > extension presents it anyway, and report anything that maps wrongly.
 >
-> Known to verify on a first live run:
->
-> - Hetzner and DigitalOcean reference numeric ids (servers, networks,
->   volumes, firewalls) with `${{ data.findBySpec(...) }}` expressions inside
->   arrays. A whole-field expression keeps its number type; one nested in an
->   array has not been checked yet.
-> - Hetzner's server-type table may predate the late-2025 CX/CPX generations.
+> Every adapter's rendered arguments are checked against the real
+> `@swamp/*` behavior schemas in the test suite. Swamp keeps the type of
+> `${{ }}` references, including ones nested in arrays and objects, which
+> the Hetzner and DigitalOcean numeric-id references rely on.
 
 The extension never calls a cloud API and never changes infrastructure. The
 official per-cloud swamp behaviors (`@swamp/aws/s3/bucket`,

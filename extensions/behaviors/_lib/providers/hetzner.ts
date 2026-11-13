@@ -464,6 +464,8 @@ interface ServerType {
   vcpus: number;
   memoryMiB: number;
   diskGiB: number;
+  /** No longer orderable: kept to size existing source servers, never chosen as a target. */
+  deprecated: boolean;
 }
 
 const row = (
@@ -472,6 +474,7 @@ const row = (
   vcpus: number,
   memoryGiB: number,
   diskGiB: number,
+  deprecated = false,
 ): ServerType => ({
   name,
   family,
@@ -479,27 +482,31 @@ const row = (
   vcpus,
   memoryMiB: memoryGiB * 1024,
   diskGiB,
+  deprecated,
 });
 
 /**
- * Server types, from Hetzner's published catalogue as of 2025 (from
- * documentation, not from the pulled @swamp/hetzner-cloud schema, which lists
- * no names; Hetzner has since introduced newer generations such as cx23 and
- * cpx12, so refresh this table when it matters). cx and cax are sold in
- * the EU locations only; cpx and ccx everywhere. Sizing reads this table
- * rather than calling the API (the server-types behavior is not a dependency
- * of a migration).
+ * Server types. The pulled @swamp/hetzner-cloud schema lists no type names,
+ * so this follows Hetzner's catalogue as of November 2026: CX Gen3 (cx23-cx53)
+ * and CPX Gen2 (cpx12-cpx62) replaced CX Gen2 and CPX Gen1 in October 2025,
+ * and CAX (Arm) and CCX (dedicated) are unchanged. The replaced types can no
+ * longer be created in the Console; they stay here, marked deprecated, so
+ * existing source servers still size correctly, and are never chosen as a
+ * target. cx and cax are sold in the EU locations only; cpx and ccx
+ * everywhere. Sizing reads this table rather than calling the API (the
+ * server-types behavior is not a dependency of a migration).
  */
 export const SERVER_TYPES: ServerType[] = [
-  row("cx22", "cx", 2, 4, 40),
-  row("cx32", "cx", 4, 8, 80),
-  row("cx42", "cx", 8, 16, 160),
-  row("cx52", "cx", 16, 32, 320),
-  row("cpx11", "cpx", 2, 2, 40),
-  row("cpx21", "cpx", 3, 4, 80),
-  row("cpx31", "cpx", 4, 8, 160),
-  row("cpx41", "cpx", 8, 16, 240),
-  row("cpx51", "cpx", 16, 32, 360),
+  row("cx23", "cx", 2, 4, 40),
+  row("cx33", "cx", 4, 8, 80),
+  row("cx43", "cx", 8, 16, 160),
+  row("cx53", "cx", 16, 32, 320),
+  row("cpx12", "cpx", 1, 2, 40),
+  row("cpx22", "cpx", 2, 4, 80),
+  row("cpx32", "cpx", 4, 8, 160),
+  row("cpx42", "cpx", 8, 16, 320),
+  row("cpx52", "cpx", 12, 24, 480),
+  row("cpx62", "cpx", 16, 32, 640),
   row("cax11", "cax", 2, 4, 40),
   row("cax21", "cax", 4, 8, 80),
   row("cax31", "cax", 8, 16, 160),
@@ -510,6 +517,16 @@ export const SERVER_TYPES: ServerType[] = [
   row("ccx43", "ccx", 16, 64, 360),
   row("ccx53", "ccx", 32, 128, 600),
   row("ccx63", "ccx", 48, 192, 960),
+  // Replaced in October 2025; sizing existing servers only.
+  row("cx22", "cx", 2, 4, 40, true),
+  row("cx32", "cx", 4, 8, 80, true),
+  row("cx42", "cx", 8, 16, 160, true),
+  row("cx52", "cx", 16, 32, 320, true),
+  row("cpx11", "cpx", 2, 2, 40, true),
+  row("cpx21", "cpx", 3, 4, 80, true),
+  row("cpx31", "cpx", 4, 8, 160, true),
+  row("cpx41", "cpx", 8, 16, 240, true),
+  row("cpx51", "cpx", 16, 32, 360, true),
 ];
 
 const FAMILY_ORDER = { cx: 0, cpx: 1, cax: 2, ccx: 3 };
@@ -528,6 +545,7 @@ export function chooseServerType(
   const eu = location === null || EU_LOCATIONS.has(location);
   return SERVER_TYPES
     .filter((t) =>
+      !t.deprecated &&
       t.architecture === architecture && t.vcpus >= vcpus &&
       t.memoryMiB >= memoryMiB &&
       (eu || (t.family !== "cx" && t.family !== "cax"))

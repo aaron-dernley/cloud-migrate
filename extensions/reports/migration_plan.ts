@@ -22,7 +22,10 @@ export interface PlanReportContext {
   modelId: string;
   definition: { name: string };
   globalArgs?: Json;
-  logger?: { info: (message: string, props?: Json) => void };
+  logger?: {
+    info: (message: string, props?: Json) => void;
+    warn?: (message: string, props?: Json) => void;
+  };
   dataRepository: {
     getContent(
       type: never,
@@ -189,19 +192,33 @@ function orderedFidelities(counts: Record<string, number>): string[] {
 async function readData(
   context: PlanReportContext,
   name: string,
+  problems: string[],
 ): Promise<Json | null> {
+  let raw: Uint8Array | null;
   try {
-    const raw = await context.dataRepository.getContent(
+    raw = await context.dataRepository.getContent(
       context.modelType as never,
       context.modelId,
       name,
     );
-    if (!raw) return null;
-    const parsed = JSON.parse(new TextDecoder().decode(raw));
-    return isObj(parsed) ? parsed : null;
-  } catch {
+  } catch (err) {
+    problems.push(`${name}: could not be read (${errorText(err)})`);
     return null;
   }
+  // No content means the method has not run yet, which is normal.
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(raw));
+    if (isObj(parsed)) return parsed;
+    problems.push(`${name}: stored data is not an object`);
+  } catch {
+    problems.push(`${name}: stored data is not valid JSON`);
+  }
+  return null;
+}
+
+function errorText(err: unknown): string {
+  return scrub(err instanceof Error ? err.message : String(err)).slice(0, 200);
 }
 
 /** Render the migration plan from already-loaded data. Exported for tests. */
@@ -213,8 +230,11 @@ export function render(input: {
   plan: Json | null;
   parity: Json | null;
   resolutions: Json | null;
+  /** Data that exists but could not be read; the plan is not approvable. */
+  readProblems?: string[];
 }): { markdown: string; json: Json } {
   const { inventory, mapping, plan, parity } = input;
+  const readProblems = input.readProblems ?? [];
   const entries = (Array.isArray(mapping?.entries) ? mapping!.entries : [])
     .map(toEntry).filter((e): e is Entry => e !== null);
   const byId = new Map(entries.map((e) => [e.sourceId, e]));
@@ -314,6 +334,14 @@ export function render(input: {
   if (stale) {
     md.push(
       "> **The plan is out of date:** it was made from an earlier mapping. Run `plan` again before approving.",
+      "",
+    );
+  }
+
+  if (readProblems.length > 0) {
+    md.push(
+      "> **Some data could not be read, so this plan is incomplete:**",
+      ...readProblems.map((p) => `> - ${line(p)}`),
       "",
     );
   }
@@ -510,7 +538,9 @@ export function render(input: {
     sourceProvider,
     targetProvider,
     targetRegion: input.targetRegion,
-    readyForApproval: !!mapping && open.length === 0 && !stale,
+    readyForApproval: !!mapping && open.length === 0 && !stale &&
+      readProblems.length === 0,
+    readProblems,
     planStale: stale,
     counts: { fidelity: fidelityCounts, kind: kindCounts },
     openDecisions: open.map(({ entry, decisions }) => ({
@@ -575,13 +605,19 @@ export const report = {
   execute: async (
     context: PlanReportContext,
   ): Promise<{ markdown: string; json: Json }> => {
+    const readProblems: string[] = [];
     const [inventory, mapping, plan, parity, resolutions] = await Promise.all([
-      readData(context, "inventory"),
-      readData(context, "mapping"),
-      readData(context, "plan"),
-      readData(context, "parity"),
-      readData(context, "resolutions"),
+      readData(context, "inventory", readProblems),
+      readData(context, "mapping", readProblems),
+      readData(context, "plan", readProblems),
+      readData(context, "parity", readProblems),
+      readData(context, "resolutions", readProblems),
     ]);
+    if (readProblems.length > 0) {
+      context.logger?.warn?.("Some data could not be read: {problems}", {
+        problems: readProblems.join("; "),
+      });
+    }
     context.logger?.info("Rendering migration plan for {name}", {
       name: context.definition.name,
     });
@@ -599,6 +635,7 @@ export const report = {
       plan,
       parity,
       resolutions,
+      readProblems,
     });
   },
 };

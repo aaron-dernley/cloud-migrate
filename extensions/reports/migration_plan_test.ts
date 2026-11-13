@@ -5,6 +5,7 @@ import { createReportTestContext } from "jsr:@swamp-club/swamp-testing@0.2026103
 import {
   formatBytes,
   parseResolutions,
+  render,
   report,
   scrub,
 } from "./migration_plan.ts";
@@ -312,4 +313,20 @@ Deno.test("scrub masks compound and JSON secret keys", () => {
   assert(!scrub("--global-arg MasterUserPassword=hunter2").includes("hunter2"));
   assert(!scrub(`{"rootPassword":"s3cret"}`).includes("s3cret"));
   assertEquals(scrub("KmsKeyId=arn:aws:kms:x"), "KmsKeyId=arn:aws:kms:x");
+});
+
+Deno.test("data that exists but can't be read is reported, not shown as missing", () => {
+  const r = render({
+    behaviorName: "m",
+    targetRegion: null,
+    inventory: null,
+    mapping: { entries: [], summary: {}, capturedAt: "t" },
+    plan: null,
+    parity: null,
+    resolutions: null,
+    readProblems: ["plan: stored data is not valid JSON"],
+  });
+  assertStringIncludes(r.markdown, "could not be read");
+  assertStringIncludes(r.markdown, "plan: stored data is not valid JSON");
+  assertEquals(r.json.readyForApproval, false);
 });

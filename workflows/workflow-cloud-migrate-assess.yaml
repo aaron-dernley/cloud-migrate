@@ -1,0 +1,72 @@
+id: 1bd30465-b8b8-4cda-9880-2a7852548ad3
+name: "@aaronge/cloud-migrate/assess"
+description: >-
+  Assess a cloud-to-cloud migration: optionally refresh each source provider
+  behavior (its list method), then build the migration's inventory, map every
+  source resource to its target equivalent, and write the plan. Reads and plans
+  only; nothing is created or changed in either cloud. Run manually by whoever
+  is driving the migration; there is no schedule.
+version: 1
+tags: {}
+inputs:
+  properties:
+    migration:
+      type: string
+      description: Name of the @aaronge/cloud-migrate behavior instance to assess.
+    sourceBehaviors:
+      type: array
+      items:
+        type: string
+      default: []
+      description: >-
+        Source provider behaviors to refresh first by running their list
+        method. Empty skips the refresh and assesses whatever data they
+        already hold.
+  required:
+    - migration
+jobs:
+  - name: refresh
+    description: Run list on each source behavior (no steps when the array is empty).
+    dependsOn: []
+    steps:
+      - name: list
+        description: Refresh one source provider behavior.
+        forEach:
+          item: source
+          in: ${{ inputs.sourceBehaviors }}
+        task:
+          type: model_method
+          modelIdOrName: ${{ self.source }}
+          methodName: list
+        dependsOn: []
+  - name: assess
+    description: Inventory the sources, map them onto the target, and write the plan.
+    dependsOn:
+      - job: refresh
+        condition:
+          type: completed
+    steps:
+      - name: inventory
+        task:
+          type: model_method
+          modelIdOrName: ${{ inputs.migration }}
+          methodName: inventory
+        dependsOn: []
+      - name: map
+        task:
+          type: model_method
+          modelIdOrName: ${{ inputs.migration }}
+          methodName: map
+        dependsOn:
+          - step: inventory
+            condition:
+              type: succeeded
+      - name: plan
+        task:
+          type: model_method
+          modelIdOrName: ${{ inputs.migration }}
+          methodName: plan
+        dependsOn:
+          - step: map
+            condition:
+              type: succeeded

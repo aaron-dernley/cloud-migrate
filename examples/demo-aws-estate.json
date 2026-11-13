@@ -1,0 +1,394 @@
+{
+  "description": "A small fictional web shop on AWS in eu-west-2, for trying @aaronge/cloud-migrate without a cloud account. Ids are made up; 111122223333 is AWS's documentation account number. One record (a CloudWatch alarm) has no adapter, to show how unsupported records surface.",
+  "records": [
+    {
+      "behaviorName": "shop-kms",
+      "behaviorType": "@swamp/aws/kms/key",
+      "name": "1111aaaa-2222-bbbb-3333-cccc4444dddd",
+      "attributes": {
+        "KeyId": "1111aaaa-2222-bbbb-3333-cccc4444dddd",
+        "Arn": "arn:aws:kms:eu-west-2:111122223333:key/1111aaaa-2222-bbbb-3333-cccc4444dddd",
+        "KeyUsage": "ENCRYPT_DECRYPT",
+        "EnableKeyRotation": true,
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "shop-data"
+          }
+        ]
+      }
+    },
+    {
+      "behaviorName": "shop-net",
+      "behaviorType": "@swamp/aws/ec2/vpc",
+      "name": "vpc-0a1b2c3d",
+      "attributes": {
+        "VpcId": "vpc-0a1b2c3d",
+        "CidrBlock": "10.20.0.0/16",
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "shop"
+          },
+          {
+            "Key": "Team",
+            "Value": "Platform"
+          }
+        ]
+      }
+    },
+    {
+      "behaviorName": "shop-net",
+      "behaviorType": "@swamp/aws/ec2/subnet",
+      "name": "subnet-0app",
+      "attributes": {
+        "SubnetId": "subnet-0app",
+        "VpcId": "vpc-0a1b2c3d",
+        "CidrBlock": "10.20.1.0/24",
+        "AvailabilityZone": "eu-west-2a",
+        "MapPublicIpOnLaunch": true,
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "app"
+          }
+        ]
+      }
+    },
+    {
+      "behaviorName": "shop-net",
+      "behaviorType": "@swamp/aws/ec2/subnet",
+      "name": "subnet-0data",
+      "attributes": {
+        "SubnetId": "subnet-0data",
+        "VpcId": "vpc-0a1b2c3d",
+        "CidrBlock": "10.20.2.0/24",
+        "AvailabilityZone": "eu-west-2b",
+        "MapPublicIpOnLaunch": false,
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "data"
+          }
+        ]
+      }
+    },
+    {
+      "behaviorName": "shop-net",
+      "behaviorType": "@swamp/aws/ec2/security-group",
+      "name": "sg-0web",
+      "attributes": {
+        "GroupId": "sg-0web",
+        "GroupName": "web",
+        "GroupDescription": "web tier",
+        "VpcId": "vpc-0a1b2c3d",
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 22,
+            "ToPort": 22,
+            "CidrIp": "10.0.0.0/8"
+          }
+        ],
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "-1",
+            "CidrIp": "0.0.0.0/0"
+          }
+        ]
+      }
+    },
+    {
+      "behaviorName": "shop-net",
+      "behaviorType": "@swamp/aws/ec2/security-group",
+      "name": "sg-0db",
+      "attributes": {
+        "GroupId": "sg-0db",
+        "GroupName": "db",
+        "GroupDescription": "database",
+        "VpcId": "vpc-0a1b2c3d",
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 5432,
+            "ToPort": 5432,
+            "SourceSecurityGroupId": "sg-0web"
+          }
+        ],
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "-1",
+            "CidrIp": "0.0.0.0/0"
+          }
+        ]
+      }
+    },
+    {
+      "behaviorName": "shop-compute",
+      "behaviorType": "@swamp/aws/ec2/instance",
+      "name": "i-0web1",
+      "attributes": {
+        "InstanceId": "i-0web1",
+        "InstanceType": "t3.medium",
+        "ImageId": "ami-0ubuntu2204",
+        "SubnetId": "subnet-0app",
+        "SecurityGroupIds": [
+          "sg-0web"
+        ],
+        "AvailabilityZone": "eu-west-2a",
+        "PrivateIpAddress": "10.20.1.11",
+        "PublicIp": "203.0.113.11",
+        "Volumes": [
+          {
+            "VolumeId": "vol-0uploads",
+            "Device": "/dev/sdf"
+          }
+        ],
+        "BlockDeviceMappings": [
+          {
+            "DeviceName": "/dev/xvda",
+            "Ebs": {
+              "VolumeSize": 30
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "web-1"
+          },
+          {
+            "Key": "Team",
+            "Value": "Platform"
+          }
+        ]
+      }
+    },
+    {
+      "behaviorName": "shop-compute",
+      "behaviorType": "@swamp/aws/ec2/instance",
+      "name": "i-0web2",
+      "attributes": {
+        "InstanceId": "i-0web2",
+        "InstanceType": "t3.medium",
+        "ImageId": "ami-0ubuntu2204",
+        "SubnetId": "subnet-0app",
+        "SecurityGroupIds": [
+          "sg-0web"
+        ],
+        "AvailabilityZone": "eu-west-2a",
+        "PrivateIpAddress": "10.20.1.12",
+        "PublicIp": "203.0.113.12",
+        "Volumes": [],
+        "BlockDeviceMappings": [
+          {
+            "DeviceName": "/dev/xvda",
+            "Ebs": {
+              "VolumeSize": 30
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "web-2"
+          },
+          {
+            "Key": "Team",
+            "Value": "Platform"
+          }
+        ]
+      }
+    },
+    {
+      "behaviorName": "shop-compute",
+      "behaviorType": "@swamp/aws/ec2/volume",
+      "name": "vol-0uploads",
+      "attributes": {
+        "VolumeId": "vol-0uploads",
+        "Size": 100,
+        "VolumeType": "gp3",
+        "Iops": 3000,
+        "Encrypted": true,
+        "KmsKeyId": "arn:aws:kms:eu-west-2:111122223333:key/1111aaaa-2222-bbbb-3333-cccc4444dddd",
+        "AvailabilityZone": "eu-west-2a",
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "uploads"
+          }
+        ]
+      }
+    },
+    {
+      "behaviorName": "shop-data",
+      "behaviorType": "@swamp/aws/rds/dbinstance",
+      "name": "orders-db",
+      "attributes": {
+        "DBInstanceIdentifier": "orders-db",
+        "DBInstanceArn": "arn:aws:rds:eu-west-2:111122223333:db:orders-db",
+        "Engine": "postgres",
+        "EngineVersion": "15.4",
+        "DBInstanceClass": "db.m6g.large",
+        "AllocatedStorage": "100",
+        "MultiAZ": true,
+        "BackupRetentionPeriod": 7,
+        "PubliclyAccessible": false,
+        "KmsKeyId": "arn:aws:kms:eu-west-2:111122223333:key/1111aaaa-2222-bbbb-3333-cccc4444dddd",
+        "DBSubnetGroupName": "shop-data",
+        "VPCSecurityGroups": [
+          "sg-0db"
+        ],
+        "Tags": [
+          {
+            "Key": "Team",
+            "Value": "Data"
+          }
+        ]
+      }
+    },
+    {
+      "behaviorName": "shop-data",
+      "behaviorType": "@swamp/aws/s3/bucket",
+      "name": "shop-assets-example",
+      "attributes": {
+        "BucketName": "shop-assets-example",
+        "Arn": "arn:aws:s3:::shop-assets-example",
+        "RegionalDomainName": "shop-assets-example.s3.eu-west-2.amazonaws.com",
+        "VersioningConfiguration": {
+          "Status": "Enabled"
+        },
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
+          ]
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "Id": "expire-tmp",
+              "Status": "Enabled",
+              "Prefix": "tmp/",
+              "ExpirationInDays": 7
+            }
+          ]
+        },
+        "Tags": [
+          {
+            "Key": "Team",
+            "Value": "Web"
+          }
+        ]
+      }
+    },
+    {
+      "behaviorName": "shop-data",
+      "behaviorType": "@swamp/aws/sqs/queue",
+      "name": "orders",
+      "attributes": {
+        "QueueUrl": "https://sqs.eu-west-2.amazonaws.com/111122223333/orders",
+        "Arn": "arn:aws:sqs:eu-west-2:111122223333:orders",
+        "QueueName": "orders",
+        "FifoQueue": false,
+        "VisibilityTimeout": 60,
+        "MessageRetentionPeriod": 345600,
+        "KmsMasterKeyId": "arn:aws:kms:eu-west-2:111122223333:key/1111aaaa-2222-bbbb-3333-cccc4444dddd"
+      }
+    },
+    {
+      "behaviorName": "shop-data",
+      "behaviorType": "@swamp/aws/secretsmanager/secret",
+      "name": "orders-db-password",
+      "attributes": {
+        "Id": "arn:aws:secretsmanager:eu-west-2:111122223333:secret:orders-db-password-AbCdEf",
+        "Name": "orders-db-password",
+        "KmsKeyId": "arn:aws:kms:eu-west-2:111122223333:key/1111aaaa-2222-bbbb-3333-cccc4444dddd",
+        "Tags": [
+          {
+            "Key": "Team",
+            "Value": "Data"
+          }
+        ]
+      }
+    },
+    {
+      "behaviorName": "shop-iam",
+      "behaviorType": "@swamp/aws/iam/role",
+      "name": "shop-web",
+      "attributes": {
+        "RoleName": "shop-web",
+        "Arn": "arn:aws:iam::111122223333:role/shop-web",
+        "RoleId": "AROAEXAMPLEWEB",
+        "Description": "Web tier instance role"
+      }
+    },
+    {
+      "behaviorName": "shop-dns",
+      "behaviorType": "@swamp/aws/route53/hosted-zone",
+      "name": "Z0SHOPEXAMPLE",
+      "attributes": {
+        "Id": "Z0SHOPEXAMPLE",
+        "Name": "shop.example.com.",
+        "HostedZoneTags": [
+          {
+            "Key": "Team",
+            "Value": "Web"
+          }
+        ]
+      }
+    },
+    {
+      "behaviorName": "shop-dns",
+      "behaviorType": "@swamp/aws/route53/record-set",
+      "name": "www",
+      "attributes": {
+        "HostedZoneId": "Z0SHOPEXAMPLE",
+        "Name": "www.shop.example.com.",
+        "Type": "A",
+        "TTL": "300",
+        "ResourceRecords": [
+          "203.0.113.11",
+          "203.0.113.12"
+        ]
+      }
+    },
+    {
+      "behaviorName": "shop-dns",
+      "behaviorType": "@swamp/aws/route53/record-set",
+      "name": "assets",
+      "attributes": {
+        "HostedZoneId": "Z0SHOPEXAMPLE",
+        "Name": "assets.shop.example.com.",
+        "Type": "CNAME",
+        "TTL": "300",
+        "ResourceRecords": [
+          "shop-assets-example.s3.eu-west-2.amazonaws.com."
+        ]
+      }
+    },
+    {
+      "behaviorName": "shop-ops",
+      "behaviorType": "@swamp/aws/cloudwatch/alarm",
+      "name": "orders-queue-depth",
+      "attributes": {
+        "AlarmName": "orders-queue-depth"
+      }
+    }
+  ]
+}

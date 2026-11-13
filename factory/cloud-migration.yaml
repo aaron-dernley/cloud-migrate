@@ -1,0 +1,751 @@
+definition:
+  schemaVersion: 5
+  description: |-
+    Migrate infrastructure from one cloud to another, from a single bucket to
+    a whole estate: agree the scope, inventory the source, map it onto the
+    target, plan waves, have the plan reviewed, provision the target, move
+    the data, prove parity, cut over, watch it, and decommission the source.
+
+    For: one migration (or one wave of a large one) driven with
+    @aaronge/cloud-migrate. Its behavior does the reading and planning and
+    calls no cloud API; the official per-cloud behaviors (@swamp/aws/*,
+    @swamp/gcp/*, ...) do every read and write. A large migration runs one
+    work item per wave, each blocked by the waves it depends on.
+
+    People decide at five points: the scope, the mapping (only when it has
+    entries that need a decision), the plan, the cutover, and the
+    decommission. Nothing irreversible happens before a person approves it:
+    the source is untouched until decommission, and decommission needs a
+    parity pass and a soak with no rollback.
+
+    Change first: the skills the plan-review stage loads, and soak's minimum
+    duration in its systemPrompt.
+
+  stages:
+    - id: scope
+      initial: true
+      tracker: { status: open }
+      description: Agree what is moving, where to, and what success means.
+      work:
+        mode: interactive
+        skills: [swamp]
+        systemPrompt: |
+          Interview the person about the migration. Find out: the source and
+          target providers, the target region (and project or account), which
+          resources are in scope (named resources, or everything one or more
+          source behaviors record), the downtime they can accept, budget or
+          egress limits, compliance or data-residency rules, and what success
+          means to them. Ask; do not assume a constraint they did not state.
+
+          Then create the @aaronge/cloud-migrate behavior for this migration,
+          named after the work item, with source, target and maxPerWave as
+          global arguments. Record scope with what was agreed, in their words
+          where you can.
+      artifacts:
+        - name: scope
+          schema:
+            type: object
+            required:
+              [summary, sourceProvider, targetProvider, targetRegion, resources, migrationBehavior, constraints, successCriteria]
+            properties:
+              summary: { type: string, minLength: 1 }
+              sourceProvider: { type: string, minLength: 1 }
+              targetProvider: { type: string, minLength: 1 }
+              targetRegion: { type: string, minLength: 1 }
+              resources:
+                description: Resource names in scope, or ["*"] for everything the source behaviors record.
+                type: array
+                minItems: 1
+                items: { type: string, minLength: 1 }
+              migrationBehavior:
+                description: The @aaronge/cloud-migrate behavior created for this work item.
+                type: string
+                minLength: 1
+              constraints:
+                type: object
+                properties:
+                  downtime: { type: string }
+                  budget: { type: string }
+                  compliance: { type: string }
+              successCriteria:
+                type: array
+                minItems: 1
+                items: { type: string, minLength: 1 }
+      transitions:
+        - name: agreed
+          to: inventory
+          gates:
+            - type: artifact-exists
+              config: { artifact: scope }
+            - type: human-approval
+              config: { id: scope-approval }
+
+    - id: inventory
+      tracker: { status: in_progress }
+      description: >-
+        Read the source through its provider behaviors and normalise it.
+      work:
+        mode: interactive
+        skills: [swamp]
+        systemPrompt: |
+          For each source behavior in {{migrationBehavior}}'s global arguments,
+          run its list (or sync/get, for full properties) so its state data is
+          current. Then run `swamp behavior run {{migrationBehavior}} inventory`.
+          Record inventory-result from the inventory data: the counts, and
+          every unsupported record and unknown field. Do not hide anything the
+          inventory could not read.
+        let:
+          migrationBehavior: artifacts["scope"].payload.migrationBehavior
+        context:
+          inject: [scope]
+      evidence:
+        - name: inventory-result
+          schema:
+            type: object
+            required: [resources, unsupported, unknownFields]
+            properties:
+              resources: { type: integer, minimum: 0 }
+              unsupported:
+                description: Records no adapter understands, as behaviorType/name.
+                type: array
+                items: { type: string }
+              unknownFields:
+                description: resource.field pairs the source did not report.
+                type: array
+                items: { type: string }
+      transitions:
+        - name: inventoried
+          to: map
+          gates:
+            - type: evidence-recorded
+              config: { name: inventory-result }
+            - type: cel
+              config:
+                expr: evidence["inventory-result"].payload.resources > 0
+                message: the inventory is empty; check the source behaviors and the scope
+
+    - id: map
+      tracker: { status: in_progress }
+      description: >-
+        Map the inventory onto the target and settle every entry that needs a
+        decision.
+      work:
+        mode: interactive
+        skills: [swamp]
+        systemPrompt: |
+          Run `swamp behavior run {{migrationBehavior}} map` and read the
+          mapping data whole. For every lossy entry, explain what is lost in
+          plain words. For every needs-decision or unsupported entry, propose
+          a resolution (a target setting, a renamed resource, a different
+          target type, or leaving it out of scope) with its trade-off; do not
+          pick for the person. Record each answer the person gives with
+          `swamp behavior run {{migrationBehavior}} resolve` (sourceId, their
+          resolution in their words, by naming them, the decision text it
+          settles, and any overrides or exclude=true), never one of your own.
+          Then re-run map, so the mapping you record is the one swamp holds.
+
+          Record mapping-review. Its counts must match the latest mapping
+          data's summary.
+        let:
+          migrationBehavior: artifacts["scope"].payload.migrationBehavior
+        context:
+          inject: [scope]
+      artifacts:
+        - name: mapping-review
+          schema:
+            type: object
+            required: [summary, counts, decisions, losses]
+            properties:
+              summary: { type: string, minLength: 1 }
+              counts:
+                type: object
+                required: [exact, lossy, needsDecision, unsupported]
+                properties:
+                  exact: { type: integer, minimum: 0 }
+                  lossy: { type: integer, minimum: 0 }
+                  needsDecision: { type: integer, minimum: 0 }
+                  unsupported: { type: integer, minimum: 0 }
+              decisions:
+                type: array
+                items:
+                  type: object
+                  required: [resource, question, proposal]
+                  additionalProperties: false
+                  properties:
+                    resource: { type: string, minLength: 1 }
+                    question: { type: string, minLength: 1 }
+                    proposal: { type: string, minLength: 1 }
+              losses:
+                type: array
+                items: { type: string, minLength: 1 }
+      transitions:
+        - name: mapped
+          to: plan
+          description: >-
+            A person rules on the mapping only when it has entries that need a
+            decision or that no adapter supports.
+          gates:
+            - type: artifact-exists
+              config: { artifact: mapping-review }
+            - type: human-approval
+              config:
+                id: mapping-decisions
+                when: >-
+                  artifacts["mapping-review"].payload.counts.needsDecision > 0 ||
+                  artifacts["mapping-review"].payload.counts.unsupported > 0
+
+    - id: plan
+      tracker: { status: in_progress }
+      maxCycles: 3
+      description: Order the mapped resources into waves with transfer and rollback.
+      work:
+        mode: interactive
+        skills: [swamp]
+        systemPrompt: |
+          Run `swamp behavior run {{migrationBehavior}} plan` and read the plan
+          data whole. Write the migration plan for a person to approve: each
+          wave, its transfer method and its egress cost (estimate it from the
+          inventory and the providers' published prices, and say it is an
+          estimate), the downtime each cutover needs against the scope's
+          constraints, and how each step rolls back. A plan whose blocked list
+          is not empty is not ready: go back to map.
+
+          On a later plan, read plan-review and plan-feedback and answer them.
+          When reviews keep finding new critical or high problems in the same
+          area, the design there is the problem: propose a simpler design to
+          the person rather than another safeguard. Write the summary last,
+          so it agrees with the waves, transfer and rollback it summarises.
+        let:
+          migrationBehavior: artifacts["scope"].payload.migrationBehavior
+        context:
+          inject: [scope, mapping-review, migration-plan, plan-review, plan-feedback]
+          optional: [migration-plan, plan-review, plan-feedback]
+      artifacts:
+        - name: migration-plan
+          schema:
+            type: object
+            required: [summary, waves, egressEstimate, rollback]
+            properties:
+              summary: { type: string, minLength: 1 }
+              waves:
+                type: array
+                minItems: 1
+                items:
+                  type: object
+                  required: [index, resources, transfer, downtime]
+                  properties:
+                    index: { type: integer, minimum: 1 }
+                    resources: { type: array, minItems: 1, items: { type: string } }
+                    transfer: { type: string, minLength: 1 }
+                    downtime: { type: string, minLength: 1 }
+              egressEstimate: { type: string, minLength: 1 }
+              rollback: { type: string, minLength: 1 }
+              blocked:
+                type: array
+                maxItems: 0
+                items: { type: string }
+      transitions:
+        - name: submit
+          to: plan-review
+          gates:
+            - type: artifact-exists
+              config: { artifact: migration-plan }
+        - name: remap
+          to: map
+          manual: true
+          description: The plan exposed a mapping problem; settle it first.
+
+    - id: plan-review
+      tracker: { status: in_progress }
+      description: >-
+        Adversarial review of the migration plan. Blocking findings send it
+        back; none, with a person's approval, lets provisioning start.
+      work:
+        mode: dispatch
+        skills: [swamp]
+        systemPrompt: |
+          You are an adversarial reviewer of a cloud migration plan:
+          {{planSummary}}
+          Try to find where it loses data, breaks the scope's constraints
+          (downtime, budget, compliance), skips a dependency, under-estimates
+          egress, or cannot roll back. Check every lossy mapping is acceptable
+          for the stated success criteria. Rate a finding critical or high only
+          if following the plan would lose or expose data, cause unplanned
+          downtime, or leave no way back. Report findings with severities and
+          the smallest fix for each.
+
+          If an earlier plan-review is injected, start from it. Carry each of
+          its findings forward under the same id: resolved true with a
+          resolutionNote naming where this plan fixes it, or unresolved if it
+          does not. Never re-raise a fixed finding under a new id. Then look
+          for new problems the changes introduced or exposed.
+
+          Judge the plan against the size of the migration and the scope's
+          constraints. Do not ask for machinery bigger than the change, and
+          prefer a simpler design over more safeguards when the design is the
+          cause: when several findings share one root cause, say so in one
+          finding and propose the design change. Gaps in process or logistics
+          that do not lose data, cause unplanned downtime or remove the way
+          back are medium at most.
+        let:
+          planSummary: artifacts["migration-plan"].payload.summary
+        context:
+          inject: [scope, mapping-review, migration-plan, plan-review]
+          optional: [plan-review]
+      artifacts:
+        - name: plan-review
+          kind: findings
+          reviews: migration-plan
+      evidence:
+        - name: plan-feedback
+          description: A person's feedback on the plan, in their words.
+          recordedBy: person
+          schema:
+            type: object
+            required: [feedback]
+            additionalProperties: false
+            properties:
+              feedback: { type: string, minLength: 1 }
+      transitions:
+        - name: approve
+          to: provision
+          gates:
+            - type: artifact-fresh
+              config: { artifact: plan-review, recordedThisCycle: true }
+            - type: findings-clear
+              config: { artifact: plan-review, blocking: [critical, high] }
+            - type: human-approval
+              config: { id: plan-approval }
+        - name: rework
+          to: plan
+          description: >-
+            The fresh plan review has an open critical or high finding, so the
+            plan goes back to be fixed.
+          gates:
+            - type: artifact-fresh
+              config: { artifact: plan-review, recordedThisCycle: true }
+            - type: findings-open
+              config: { artifact: plan-review, blocking: [critical, high] }
+        - name: revise
+          to: plan
+          manual: true
+          description: >-
+            A person sent the plan back without a blocking finding; their
+            feedback is recorded first so the next plan answers it.
+          gates:
+            - type: evidence-recorded
+              config: { name: plan-feedback }
+
+    - id: provision
+      tracker: { status: in_progress }
+      description: Create the target resources through their swamp behaviors.
+      work:
+        mode: interactive
+        skills: [swamp]
+        systemPrompt: |
+          For each resource in the approved plan, create the target behavior
+          the mapping names, with the mapping's global arguments, and run its
+          create. Then run its sync and `swamp behavior run
+          {{migrationBehavior}} parity`. Create nothing the plan does not
+          list, and touch nothing on the source. Record provisioned with every
+          behavior created and the parity status.
+        let:
+          migrationBehavior: artifacts["scope"].payload.migrationBehavior
+        context:
+          inject: [migration-plan]
+      evidence:
+        - name: provisioned
+          schema:
+            type: object
+            required: [behaviors, parity]
+            properties:
+              behaviors: { type: array, minItems: 1, items: { type: string } }
+              parity: { enum: [passed, failed] }
+              mismatches: { type: array, items: { type: string } }
+      transitions:
+        - name: provisioned
+          to: transfer
+          gates:
+            - type: evidence-recorded
+              config: { name: provisioned, requireField: { parity: passed } }
+        - name: replan
+          to: plan
+          manual: true
+          description: Provisioning showed the plan cannot work as written.
+
+    - id: transfer
+      tracker: { status: in_progress }
+      maxCycles: 3
+      description: Move the data with the plan's transfer method and verify it.
+      work:
+        mode: interactive
+        systemPrompt: |
+          Start each wave's transfer with the method the plan names, with the
+          person when it needs credentials or a choice. Resources with no data
+          (networks, firewalls, DNS, IAM) have nothing to transfer: record
+          their count as zero on both sides. When it finishes, record
+          transfer-report from the transfer tools' own reports: the unit
+          counted for each kind (objects, rows, files, images, secrets), the
+          totals on each side, bytes, failures, and how they were checked
+          (checksums, row counts, digests). Record only what the tools
+          reported.
+        context:
+          inject: [migration-plan]
+      evidence:
+        - name: transfer-report
+          schema:
+            type: object
+            required: [status, units, sourceCount, targetCount, failures, verifiedBy]
+            properties:
+              status: { enum: [complete, failed] }
+              units:
+                description: What was counted, e.g. "objects, rows".
+                type: string
+                minLength: 1
+              sourceCount: { type: integer, minimum: 0 }
+              targetCount: { type: integer, minimum: 0 }
+              bytes: { type: integer, minimum: 0 }
+              failures: { type: integer, minimum: 0 }
+              verifiedBy: { type: string, minLength: 1 }
+      transitions:
+        - name: verified
+          to: cutover
+          gates:
+            - type: evidence-recorded
+              config: { name: transfer-report, requireField: { status: complete } }
+            - type: cel
+              config:
+                expr: >-
+                  evidence["transfer-report"].payload.failures == 0 &&
+                  evidence["transfer-report"].payload.sourceCount ==
+                  evidence["transfer-report"].payload.targetCount
+                message: the transfer has failures or the counts differ
+        - name: retry
+          to: transfer
+          manual: true
+          description: >-
+            The transfer failed or the counts differ; a person decides to run
+            it again (or abandons), since a repeat costs egress.
+          gates:
+            - type: evidence-recorded
+              config: { name: transfer-report }
+            - type: cel
+              config:
+                expr: >-
+                  evidence["transfer-report"].payload.status == "failed" ||
+                  evidence["transfer-report"].payload.failures > 0 ||
+                  evidence["transfer-report"].payload.sourceCount !=
+                  evidence["transfer-report"].payload.targetCount
+                message: the transfer is complete and verified
+
+    - id: cutover
+      tracker: { status: in_progress }
+      description: >-
+        Point clients at the target. The source stays as it is, so rolling
+        back is pointing them back.
+      work:
+        mode: interactive
+        systemPrompt: |
+          Lay out the cutover for the person: what changes (DNS, config,
+          credentials), the downtime against the scope, and the rollback.
+          Do not cut over until they approve. Then cut over with them, run a
+          final delta transfer if writes continued, and record cutover.
+        context:
+          inject: [scope, migration-plan, transfer-report]
+      evidence:
+        - name: cutover
+          schema:
+            type: object
+            required: [changes, completedAt]
+            properties:
+              changes: { type: array, minItems: 1, items: { type: string } }
+              completedAt: { type: string, format: date-time }
+      transitions:
+        - name: cut-over
+          to: soak
+          gates:
+            - type: human-approval
+              config: { id: cutover-approval }
+            - type: evidence-recorded
+              config: { name: cutover }
+
+    - id: soak
+      tracker: { status: in_progress }
+      description: Watch the target in service before the source goes.
+      work:
+        mode: interactive
+        systemPrompt: |
+          Watch the migrated resources in service for at least 7 days (or
+          what the scope agreed): errors, access denials, latency, cost. Re-run
+          the target behaviors' sync and `swamp behavior run
+          {{migrationBehavior}} parity`. Record soak with what was observed.
+          If anything needed a rollback, say so; do not hide it.
+        let:
+          migrationBehavior: artifacts["scope"].payload.migrationBehavior
+      evidence:
+        - name: soak
+          schema:
+            type: object
+            required: [days, parity, rolledBack, observations]
+            properties:
+              days: { type: number, minimum: 0 }
+              parity: { enum: [passed, failed] }
+              rolledBack: { type: boolean }
+              observations: { type: string, minLength: 1 }
+      transitions:
+        - name: stable
+          to: decommission
+          gates:
+            - type: evidence-recorded
+              config: { name: soak, requireField: { parity: passed, rolledBack: false } }
+        - name: rolled-back
+          to: plan
+          manual: true
+          description: The target failed in service; plan again from what was learned.
+
+    - id: decommission
+      tracker: { status: in_progress }
+      description: >-
+        Remove the source resources. Irreversible, so a person approves it
+        after a clean soak.
+      work:
+        mode: interactive
+        skills: [swamp]
+        systemPrompt: |
+          List exactly which source resources will be deleted, with their
+          provider ids from `swamp behavior get <name> --json`, and any final
+          backup or retention step. Wait for the person's approval. Then
+          delete through the source behaviors' delete methods only, and record
+          decommissioned.
+        context:
+          inject: [scope, soak]
+      evidence:
+        - name: decommissioned
+          schema:
+            type: object
+            required: [deleted]
+            properties:
+              deleted: { type: array, items: { type: string } }
+              kept:
+                description: Source resources deliberately kept, and why.
+                type: array
+                items: { type: string }
+      transitions:
+        - name: done
+          to: done
+          gates:
+            - type: human-approval
+              config: { id: decommission-approval }
+            - type: evidence-recorded
+              config: { name: decommissioned }
+
+    - id: done
+      terminal: true
+      tracker: { status: shipped }
+
+    - id: abandoned
+      terminal: true
+      tracker: { status: closed }
+
+  globalTransitions:
+    - name: abandon
+      to: abandoned
+      gates:
+        - type: human-approval
+          config: { id: abandon-confirmation }
+scenarios:
+  - scenario: bucket-migration
+    description: >-
+      One bucket moves from S3 to GCS. The scope and plan are approved, the
+      mapping needs no decision so no one is asked, a high review finding
+      sends the plan back once, a short transfer is refused, and the source is
+      deleted only after a clean soak and an approval.
+    steps:
+      - record: { artifact: scope }
+        payload:
+          summary: Move example-assets to GCS
+          sourceProvider: aws
+          targetProvider: gcp
+          targetRegion: europe-west2
+          resources: [example-assets]
+          migrationBehavior: mig-1
+          constraints: { downtime: 10 minutes }
+          successCriteria: [Every object present with matching checksums]
+      - move: agreed
+        expect: { refused: "awaiting approval 'scope-approval'" }
+      - approve: scope-approval
+      - move: agreed
+      - record: { evidence: inventory-result }
+        payload: { resources: 1, unsupported: [], unknownFields: [] }
+      - move: inventoried
+      - record: { artifact: mapping-review }
+        payload:
+          summary: One bucket, labels renamed
+          counts: { exact: 0, lossy: 1, needsDecision: 0, unsupported: 0 }
+          decisions: []
+          losses: [Team=Web becomes team=web]
+      - move: mapped
+      - expect: { stage: plan }
+      - record: { artifact: migration-plan }
+        payload:
+          summary: One wave via Storage Transfer Service
+          waves:
+            - index: 1
+              resources: [example-assets]
+              transfer: gcp-storage-transfer-service
+              downtime: 10 minutes for the final delta
+          egressEstimate: about 2 USD for 20 GB (estimate)
+          rollback: Point clients back at S3
+      - move: submit
+      - record: { artifact: plan-review }
+        payload: { findings: [{ id: F1, severity: high, description: No delta sync before cutover }] }
+      - move: rework
+      - record: { artifact: migration-plan }
+        payload:
+          summary: One wave, delta sync before cutover
+          waves:
+            - index: 1
+              resources: [example-assets]
+              transfer: gcp-storage-transfer-service
+              downtime: 10 minutes for the final delta
+          egressEstimate: about 2 USD for 20 GB (estimate)
+          rollback: Point clients back at S3
+      - move: submit
+      - record: { artifact: plan-review }
+        payload: { findings: [] }
+      - move: approve
+        expect: { refused: "awaiting approval 'plan-approval'" }
+      - approve: plan-approval
+      - move: approve
+      - record: { evidence: provisioned }
+        payload: { behaviors: [mig-1-example-assets-gcp], parity: passed }
+      - move: provisioned
+      - record: { evidence: transfer-report }
+        payload:
+          status: complete
+          units: objects
+          sourceCount: 100
+          targetCount: 99
+          failures: 0
+          verifiedBy: transfer job object counts
+      - move: verified
+        expect: { refused: "counts differ" }
+      - move: retry
+        manual: true
+      - record: { evidence: transfer-report }
+        payload:
+          status: complete
+          units: objects
+          sourceCount: 100
+          targetCount: 100
+          failures: 0
+          verifiedBy: transfer job checksums
+      - move: verified
+      - record: { evidence: cutover }
+        payload: { changes: [app config bucket name], completedAt: "2026-11-12T10:00:00Z" }
+      - move: cut-over
+        expect: { refused: "awaiting approval 'cutover-approval'" }
+      - approve: cutover-approval
+      - move: cut-over
+      - record: { evidence: soak }
+        payload: { days: 7, parity: passed, rolledBack: false, observations: No errors }
+      - move: stable
+      - record: { evidence: decommissioned }
+        payload: { deleted: [example-assets] }
+      - move: done
+        expect: { refused: "awaiting approval 'decommission-approval'" }
+      - approve: decommission-approval
+      - move: done
+      - expect: { stage: done }
+  - scenario: mapping-needs-a-decision
+    description: >-
+      A customer-managed key needs a decision, so the mapping waits for a
+      person; an unclean soak cannot reach decommission.
+    steps:
+      - record: { artifact: scope }
+        payload:
+          summary: Move secure-bucket
+          sourceProvider: aws
+          targetProvider: gcp
+          targetRegion: europe-west2
+          resources: [secure-bucket]
+          migrationBehavior: mig-2
+          constraints: {}
+          successCriteria: [Data encrypted with our own key]
+      - approve: scope-approval
+      - move: agreed
+      - record: { evidence: inventory-result }
+        payload: { resources: 1, unsupported: [], unknownFields: [] }
+      - move: inventoried
+      - record: { artifact: mapping-review }
+        payload:
+          summary: Customer key needs a target key
+          counts: { exact: 0, lossy: 0, needsDecision: 1, unsupported: 0 }
+          decisions:
+            - resource: secure-bucket
+              question: Which Cloud KMS key?
+              proposal: Create a new key ring in europe-west2
+          losses: []
+      - move: mapped
+        expect: { refused: "mapping-decisions" }
+      - approve: mapping-decisions
+      - move: mapped
+      - expect: { stage: plan }
+  - scenario: review-carries-findings-forward
+    description: >-
+      A high finding sends the plan back. The next review carries it forward
+      under the same id as resolved, so approval opens without the finding
+      being raised again, which is how reviews converge.
+    steps:
+      - record: { artifact: scope }
+        payload:
+          summary: Move web tier
+          sourceProvider: aws
+          targetProvider: gcp
+          targetRegion: europe-west2
+          resources: [web]
+          migrationBehavior: mig-3
+          constraints: {}
+          successCriteria: [Web tier serves from GCP]
+      - approve: scope-approval
+      - move: agreed
+      - record: { evidence: inventory-result }
+        payload: { resources: 3, unsupported: [], unknownFields: [] }
+      - move: inventoried
+      - record: { artifact: mapping-review }
+        payload:
+          summary: Three resources, nothing open
+          counts: { exact: 1, lossy: 2, needsDecision: 0, unsupported: 0 }
+          decisions: []
+          losses: []
+      - move: mapped
+      - record: { artifact: migration-plan }
+        payload:
+          summary: One wave
+          waves: [{ index: 1, resources: [web], transfer: rebuild, downtime: none }]
+          egressEstimate: negligible (estimate)
+          rollback: Point DNS back
+      - move: submit
+      - record: { artifact: plan-review }
+        payload: { findings: [{ id: F1, severity: high, description: Subnet overlaps the source VPC }] }
+      - move: rework
+      - record: { artifact: migration-plan }
+        payload:
+          summary: One wave, non-overlapping subnet
+          waves: [{ index: 1, resources: [web], transfer: rebuild, downtime: none }]
+          egressEstimate: negligible (estimate)
+          rollback: Point DNS back
+      - move: submit
+      - record: { artifact: plan-review }
+        payload:
+          findings:
+            - id: F1
+              severity: high
+              description: Subnet overlaps the source VPC
+              resolved: true
+              resolutionNote: Plan v2 uses 10.30.1.0/24
+      - move: approve
+        expect: { refused: "awaiting approval 'plan-approval'" }
+      - approve: plan-approval
+      - move: approve
+      - expect: { stage: provision }

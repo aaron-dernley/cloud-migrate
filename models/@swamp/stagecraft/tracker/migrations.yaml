@@ -1,0 +1,9 @@
+type: '@swamp/stagecraft/tracker'
+typeVersion: 2026.11.05.1
+id: ea4a411b-1808-4ff3-9909-a35ca4e286b3
+name: migrations
+version: 1
+tags: {}
+globalArguments:
+  prefix: mig
+methods: {}

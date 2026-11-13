@@ -1,0 +1,42 @@
+manifestVersion: 1
+name: "@aaronge/cloud-migrate"
+version: "2026.11.13.1"
+description: "Plan and verify migrations between clouds, from one bucket to a whole estate: 21 resource kinds (networks, subnets, firewalls, VMs, volumes, SQL databases, DNS, load balancers, Kubernetes, registries, queues, functions, caches, file shares, NoSQL, KMS keys, secrets, IAM) across AWS, Google Cloud, DigitalOcean and Hetzner. Reads the official per-cloud swamp behaviors' data, maps each resource onto the target (exact, lossy, needs-decision or unsupported) with dependencies wired by CEL, orders it into dependency waves with transfer and rollback steps, and proves parity once the target is provisioned. Calls no cloud API itself, and ships a stagecraft factory that stops for a person before every irreversible step."
+
+repository: https://github.com/aaron-dernley/cloud-migrate
+license: MIT
+
+behaviors:
+  - cloud_migrate.ts
+
+reports:
+  - migration_plan.ts
+
+skills:
+  - cloud-migrate
+
+workflows:
+  - workflow-cloud-migrate-assess.yaml
+
+additionalFiles:
+  - README.md
+  - LICENSE
+  - factory/cloud-migration.yaml
+  - docs/using-with-stagecraft.md
+  - examples/demo-aws-estate.json
+
+labels:
+  - migration
+  - multi-cloud
+  - aws
+  - gcp
+  - digitalocean
+  - hetzner
+  - stagecraft
+  - planning
+
+platforms:
+  - linux-aarch64
+  - linux-x86_64
+  - darwin-aarch64
+  - darwin-x86_64
